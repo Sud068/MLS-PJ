@@ -1,0 +1,126 @@
+# XAI Toolkit CLI - 默认配置文件
+# 适用于表格数据的模型解释
+
+# =============== 数据配置 ===============
+data:
+  # 数据文件路径 (支持CSV, Parquet, HDF5)
+  path: "data/sample_dataset.csv"
+
+  # 数据类型: tabular (表格), image (图像), text (文本)
+  type: "tabular"
+
+  # 目标变量列名 (分类/回归)
+  target: "target_column"
+
+  # 特征列名 (可选，默认使用除目标列外的所有列)
+  features:
+    - "age"
+    - "income"
+    - "credit_score"
+    - "loan_amount"
+
+  # 数据预处理
+  preprocessing:
+    # 缺失值处理: drop/mean/median/mode
+    missing_values: "mean"
+
+    # 是否标准化数据 (对某些解释器很重要)
+    standardize: true
+
+    # 分类变量编码: onehot/ordinal
+    categorical_encoding: "onehot"
+
+    # 测试集比例 (用于评估解释质量)
+    test_size: 0.2
+
+# =============== 模型配置 ===============
+model:
+  # 模型文件路径 (支持pickle, joblib, ONNX, H5)
+  path: "models/trained_model.pkl"
+
+  # 模型类型:
+  #   sklearn - Scikit-learn模型
+  #   xgboost - XGBoost模型
+  #   lightgbm - LightGBM模型
+  #   pytorch - PyTorch模型
+  #   tensorflow - TensorFlow/Keras模型
+  type: "sklearn"
+
+  # 模型任务类型: classification/regression
+  task: "classification"
+
+  # 模型输入格式 (仅对深度学习模型需要)
+  input_shape: [10]  # 特征数量
+
+# =============== 解释器配置 ===============
+explainer:
+  # 解释方法选择:
+  #   tabular: shap, lime, dice
+  #   image: grad_cam, integrated_gradients, lime_image
+  #   text: lime_text, attention, shap_text
+  method: "shap"
+
+  # 解释器特定参数
+  params:
+    # SHAP参数
+    nsamples: 1000  # 用于Kernel SHAP的样本数
+    tree_limit: 100  # 树模型解释时使用的树数量
+
+    # LIME参数
+    num_features: 10  # 解释中显示的特征数量
+    num_samples: 5000 # LIME生成的扰动样本数
+
+    # DiCE参数 (反事实解释)
+    num_cfs: 5       # 生成的反事实数量
+    proximity_weight: 0.5
+    diversity_weight: 1.0
+
+  # 要解释的样本索引 (可选)
+  sample_indices: [0, 42, 100]
+
+  # 类索引 (多类分类中指定解释的类)
+  class_index: 1
+
+# =============== 评估配置 ===============
+evaluation:
+  # 是否运行解释评估
+  enable: true
+
+  # 评估指标 (多个用逗号分隔)
+  metrics:
+    - "fidelity"    # 解释保真度
+    - "stability"   # 解释稳定性
+    - "sensitivity" # 解释敏感性
+
+  # 评估参数
+  params:
+    n_iterations: 5  # 稳定性评估的迭代次数
+    noise_level: 0.1 # 敏感性分析的噪声水平
+
+# =============== 可视化配置 ===============
+visualization:
+  # 输出格式: png, html, pdf, all
+  format: "all"
+
+  # 输出目录
+  output_dir: "results/"
+
+  # 绘图样式
+  style:
+    color_map: "viridis"
+    figure_size: [10, 8]
+    font_size: 12
+
+  # 报告生成选项
+  report:
+    title: "模型解释报告"
+    author: "XAI Toolkit"
+    include_summary: true
+    include_metrics: true
+    include_samples: 5
+
+# =============== 日志配置 ===============
+logging:
+  level: "INFO"  # DEBUG, INFO, WARNING, ERROR
+  file: "logs/xai_analysis.log"
+  console: true
