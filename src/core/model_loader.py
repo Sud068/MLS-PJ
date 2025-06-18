@@ -99,31 +99,27 @@ class ModelLoader:
         else:
             with open(model_path, 'rb') as f:
                 return pickle.load(f)
-
     @staticmethod
     def load_pytorch(model_path: str, **kwargs) -> Any:
-        """加载PyTorch模型"""
         if torch is None:
             raise ImportError("PyTorch未安装，无法加载模型")
 
         device = kwargs.get('device', 'cpu')
         map_location = torch.device(device)
 
-        # 检查是否是完整模型还是state_dict
-        model = torch.load(model_path, map_location=map_location)
+        model_arch = kwargs.get('model_arch', None)
 
-        if isinstance(model, torch.nn.Module):
-            return model
-        else:
-            # 假设是state_dict，需要模型架构
-            model_arch = kwargs.get('model_arch')
-            if model_arch is None:
-                raise ValueError("需要提供model_arch参数来加载state_dict")
-
+        # 加载 state_dict
+        if model_arch is not None:
             model = model_arch()
-            model.load_state_dict(torch.load(model_path, map_location=map_location))
+            state_dict = torch.load(model_path, map_location=map_location)
+            model.load_state_dict(state_dict)
             model.to(device)
             model.eval()
+            return model
+        else:
+            # 加载完整模型对象，需要 weights_only=False
+            model = torch.load(model_path, map_location=map_location, weights_only=False)
             return model
 
     @staticmethod
@@ -175,3 +171,16 @@ class ModelLoader:
         else:
             # 默认使用joblib保存
             joblib.dump(model, model_path)
+
+import torch
+from torchvision.models import resnet18
+def main():
+    # 1. 保存完整模型
+    model = resnet18(pretrained=False)
+    torch.save(model, 'resnet18.pth')
+    
+    model_loaded = ModelLoader.load('resnet18.pth', framework='pytorch')
+    print(model_loaded)  # <class 'torchvision.models.resnet.ResNet'>
+
+if __name__ == "__main__":
+    main()

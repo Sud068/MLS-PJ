@@ -11,7 +11,7 @@ import tempfile
 import zipfile
 import tarfile
 import logging
-from typing import List, Tuple, Optional, Dict, Any
+from typing import List, Tuple, Optional, Dict, Any,Union
 from .validation import validate_not_none, validate_type, validate_file_path
 
 logger = logging.getLogger(__name__)

@@ -7,6 +7,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Union
 import numpy as np
+from PIL.Image import Image
 
 
 @dataclass
@@ -28,16 +29,22 @@ class ExplanationResult:
     metrics: Dict[str, float] = field(default_factory=dict)
     metadata: Dict[str, Any] = field(default_factory=dict)
     counterfactuals: List[Dict[str, Any]] = field(default_factory=list)
+    @staticmethod
+    def to_serializable(obj):
+        import numpy as np
+        if isinstance(obj, np.ndarray):
+            return obj.tolist()
+        elif isinstance(obj, dict):
+            return {k: ExplanationResult.to_serializable(v) for k, v in obj.items()}
+        elif isinstance(obj, list):
+            return [ExplanationResult.to_serializable(v) for v in obj]
+        else:
+            return obj
 
     def to_dict(self) -> Dict[str, Any]:
         """将解释结果转换为字典"""
-        return {
-            "feature_importance": self.feature_importance,
-            "metrics": self.metrics,
-            "metadata": self.metadata,
-            "counterfactuals": self.counterfactuals
-        }
-
+        return ExplanationResult.to_serializable(self.__dict__)
+        
 
 class BaseExplainer(ABC):
     """
@@ -69,7 +76,7 @@ class BaseExplainer(ABC):
 
     def _validate_model(self):
         """验证模型兼容性"""
-        if not callable(getattr(self.model, "predict", None):
+        if not callable(getattr(self.model, "predict", None)):
             raise ValueError("模型必须实现 predict 方法")
 
         if self.task_type not in ['classification', 'regression']:
@@ -135,3 +142,89 @@ class BaseExplainer(ABC):
         # 这里仅添加元数据
         explanation.metadata['evaluation_metrics'] = metrics
         return explanation
+
+def display_explanation_result(result: ExplanationResult):
+    """格式化展示 ExplanationResult 内容"""
+    from pprint import pprint
+    import matplotlib.pyplot as plt
+    import numpy as np
+    from PIL import Image
+
+    print("\n==== Explanation Result ====\n")
+
+    print("[元数据 metadata]")
+    pprint(result.metadata)
+
+    if result.feature_importance:
+        print("\n[特征重要性 feature_importance]")
+        for feat, score in result.feature_importance.items():
+            print(f" - {feat}: {score:.4f}")
+    else:
+        print("\n[特征重要性 feature_importance] 无")
+
+    if result.metrics:
+        print("\n[解释质量指标 metrics]")
+        for key, val in result.metrics.items():
+            print(f" - {key}: {val}")
+    else:
+        print("\n[解释质量指标 metrics] 无")
+
+    if result.counterfactuals:
+        print("\n[反事实 counterfactuals]")
+        for i, cf in enumerate(result.counterfactuals):
+            print(f" - CF#{i+1}: {cf}")
+    else:
+        print("\n[反事实 counterfactuals] 无")
+
+    print("\n[原始结果 raw_result]")
+    if isinstance(result.raw_result, np.ndarray):
+        print(f" - NumPy 数组，形状: {result.raw_result.shape}")
+    else:
+        print(f" - 类型: {type(result.raw_result)}, 内容摘要: {str(result.raw_result)[:200]}")
+
+    print("\n[可视化 visualization]")
+
+    def show_image_array(arr, title=None):
+        """显示 NumPy 图像数组"""
+        plt.figure()
+        if arr.ndim == 2:  # 灰度图
+            plt.imshow(arr, cmap='gray')
+        else:
+            plt.imshow(arr)
+        if title:
+            plt.title(title)
+        plt.axis('off')
+        plt.show()
+
+    if isinstance(result.visualization, dict):
+        for k, v in result.visualization.items():
+            print(f" - {k}: ", end="")
+            if isinstance(v, np.ndarray):
+                print(f"ndarray, 形状 {v.shape}")
+                try:
+                    show_image_array(v, title=k)
+                except Exception as e:
+                    print(f"   >> 显示失败: {e}")
+            elif isinstance(v, Image.Image):
+                print(f"PIL图像, 尺寸 {v.size}")
+                try:
+                    v.show(title=k)
+                except Exception as e:
+                    print(f"   >> 显示失败: {e}")
+            else:
+                print(f"{type(v)}（无法可视化）")
+    elif isinstance(result.visualization, (np.ndarray, Image.Image)):
+        print(f"单一图像对象: {type(result.visualization)}")
+        try:
+            if isinstance(result.visualization, np.ndarray):
+                show_image_array(result.visualization)
+            else:
+                result.visualization.show()
+        except Exception as e:
+            print(f"   >> 显示失败: {e}")
+    elif result.visualization is not None:
+        print(f"类型: {type(result.visualization)}")
+    else:
+        print(" - 无可视化数据")
+
+    print("\n============================\n")

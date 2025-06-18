@@ -5,8 +5,8 @@ Grad-CAM解释器实现
 
 import numpy as np
 import cv2
-from typing import Any, Dict, List, Optional, Tuple
-from src.core.explainer import BaseExplainer, ExplanationResult
+from typing import Any, Dict, List, Optional, Tuple, Union
+from core.explainer import BaseExplainer, ExplanationResult
 import logging
 import torch
 import tensorflow as tf
@@ -54,6 +54,7 @@ class GradCAMExplainer(BaseExplainer):
             self.target_layer = self._find_default_layer()
             logger.info(f"使用默认目标层: {self.target_layer}")
 
+        self.target_layer = 'layer4'
         # 设置梯度钩子
         self.feature_maps = None
         self.gradients = None
@@ -79,20 +80,20 @@ class GradCAMExplainer(BaseExplainer):
     def _find_default_layer(self) -> str:
         """查找合适的默认层"""
         if self.model_type == 'pytorch':
+            # 先转为 list
+            named_modules = list(self.model.named_modules())
             # 查找最后一个卷积层
-            for name, module in self.model.named_modules()[::-1]:
+            for name, module in reversed(named_modules):
                 if isinstance(module, torch.nn.Conv2d):
                     return name
+            # 如果没找到卷积层，使用最后一层
+            return named_modules[-1][0]
         elif self.model_type in ['tensorflow', 'keras']:
             # 查找最后一个卷积层
             for layer in reversed(self.model.layers):
                 if 'conv' in layer.name.lower() or 'conv2d' in layer.name:
                     return layer.name
-
-        # 如果没找到卷积层，使用最后一层
-        if self.model_type == 'pytorch':
-            return list(self.model.named_modules())[-1][0]
-        else:
+            # 如果没找到
             return self.model.layers[-1].name
 
     def _register_hooks_pytorch(self):
@@ -209,7 +210,9 @@ class GradCAMExplainer(BaseExplainer):
 
         # 归一化到0-1
         img_array = img_array.astype(np.float32) / 255.0
-
+        mean = np.array([0.485, 0.456, 0.406])
+        std = np.array([0.229, 0.224, 0.225])
+        img_array = (img_array - mean) / std
         return img_array
 
     def _compute_heatmap(self,
@@ -365,3 +368,57 @@ class GradCAMExplainer(BaseExplainer):
             self.forward_handle.remove()
         if hasattr(self, 'backward_handle'):
             self.backward_handle.remove()
+
+import torch
+import types
+import torchvision.models as models
+import torchvision.transforms as transforms
+from PIL import Image
+import matplotlib.pyplot as plt
+import numpy as np
+
+def main():
+    # 1. 加载预训练模型
+    model = torch.load("resnet18_full_model.pth", map_location="cpu",weights_only = False)
+    # model = models.resnet18(pretrained=True)
+    model.eval()
+    # 2. 给模型添加predict方法
+    def predict(self, x):
+        with torch.no_grad():
+            return self(x)
+    model.predict = types.MethodType(predict, model)
+
+    # 3. 选择目标层
+    target_layer = 'layer4'
+
+    # 4. 初始化Grad-CAM解释器
+    explainer = GradCAMExplainer(
+        model=model,
+        task_type='classification',
+        target_layer=target_layer,
+        use_cuda=False,
+        model_type='pytorch'
+    )
+
+    # 5. 读取和预处理图片
+    img_path = '/data/duyongkun/CPX/classify/MLS-PJ/test_images/cat.png'
+    input_image = Image.open(img_path).convert('RGB')
+    img_np = np.array(input_image)  # HWC, uint8, [0,255]
+    # 6. 生成Grad-CAM解释
+    result = explainer.explain(img_np, target=283)
+
+    # 7. 显示可视化结果
+    superimposed = result.visualization['superimposed']
+    plt.imshow(superimposed)
+    plt.title('Grad-CAM Result')
+    plt.axis('off')
+    plt.show()
+
+    # 选做：保存图片
+    Image.fromarray(superimposed).save('gradcam_output.jpg')
+    print("Grad-CAM 结果已保存为 gradcam_output.jpg")
+
+    
+
+if __name__ == "__main__":
+    main()

@@ -6,13 +6,13 @@
 import numpy as np
 import torch
 from typing import Any, Dict, List, Optional, Union
-from src.core.explainer import BaseExplainer, ExplanationResult
+from core.explainer import BaseExplainer, ExplanationResult
 import logging
 import matplotlib.pyplot as plt
 from matplotlib.colors import LinearSegmentedColormap
 import warnings
 import re
-
+import matplotlib.pyplot as plt
 # 忽略警告
 warnings.filterwarnings("ignore")
 
@@ -286,3 +286,58 @@ class AttentionExplainer(BaseExplainer):
             results.append(self.explain(text, target=target, **kwargs))
 
         return results
+    
+def main():
+    # 构造一个假输入和假模型
+    class DummyAttention(torch.nn.Module):
+        def __init__(self, num_layers=2, num_heads=2, seq_len=6):
+            super().__init__()
+            self.attn = torch.nn.MultiheadAttention(embed_dim=16, num_heads=2, batch_first=True)
+            self.num_layers = num_layers
+            self.num_heads = num_heads
+            self.seq_len = seq_len
+        def forward(self, input_ids=None, output_attentions=True, **kwargs):
+            class Output:
+                def __init__(self, num_layers, num_heads, seq_len):
+                    self.attentions = [torch.rand(num_heads, seq_len, seq_len) for _ in range(num_layers)]
+            return Output(self.num_layers, self.num_heads, self.seq_len)
+        def predict(self, *args, **kwargs):
+            return np.array([0])
+    # 假分词器
+    class DummyTokenizer:
+        def tokenize(self, text):
+            return text.split()
+        def __call__(self, text, return_tensors=None):
+            # 简单编码
+            tokens = text.split()
+            return {"input_ids": torch.tensor([[i for i in range(len(tokens))]])}
+
+    # 初始化假模型和分词器
+    model = DummyAttention(num_layers=2, num_heads=2, seq_len=6)
+    tokenizer = DummyTokenizer()
+
+    explainer = AttentionExplainer(
+        model=model,
+        task_type='classification',
+        tokenizer=tokenizer,
+        layer_index=0,  # 可指定层
+        head_index=0    # 可指定头
+    )
+
+    # 输入文本
+    text = "The quick brown fox jumps over"
+    result = explainer.explain(text, aggregation='mean', include_special=False)
+
+    print("Tokens:", result.metadata['tokens'])
+    print("特征重要性:", result.feature_importance)
+    print("HTML高亮：\n", result.visualization['highlighted_text'])
+
+    # 可视化热力图
+    fig = result.visualization['heatmap_figure']
+    fig.suptitle("Attention Heatmap")
+    
+    plt.savefig("attention_explainer.png")
+    print("热力图保存至attention_explainer.png")
+
+if __name__ == "__main__":
+    main()

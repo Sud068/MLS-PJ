@@ -7,14 +7,14 @@ import numpy as np
 import re
 import string
 from typing import Any, Dict, List, Optional, Union
-from src.core.explainer import BaseExplainer, ExplanationResult
+from core.explainer import BaseExplainer, ExplanationResult
 import logging
 import lime
 from lime.lime_text import LimeTextExplainer
 import nltk
 from nltk.corpus import stopwords
 import warnings
-
+import matplotlib.pyplot as plt
 # 下载停用词资源
 try:
     nltk.data.find('corpora/stopwords')
@@ -234,3 +234,47 @@ class LimeTextExplainerWrapper(BaseExplainer):
             results.append(self.explain(text, target=target, **kwargs))
 
         return results
+    
+def main():
+    # 1. 构造一个假模型（具有predict_proba方法）
+    class DummyTextModel:
+        def predict_proba(self, texts):
+            # 假设二分类，返回 [p0, p1]，简单用长度决定概率
+            results = []
+            for text in texts:
+                p1 = min(1.0, max(0.0, len(text) / 40))
+                results.append([1 - p1, p1])
+            return np.array(results)
+        def predict(self, texts):
+            # 返回类别
+            proba = self.predict_proba(texts)
+            return np.argmax(proba, axis=1)
+
+    # 2. 初始化LIME解释器
+    model = DummyTextModel()
+    class_names = ['neg', 'pos']
+    explainer = LimeTextExplainerWrapper(
+        model=model,
+        task_type='classification',
+        class_names=class_names,
+        num_features=6
+    )
+
+    # 3. 输入文本
+    text = "LIME is a great tool for understanding model decisions in NLP tasks!"
+    result = explainer.explain(text, target=1, num_features=6)
+
+    print("原文：", text)
+    print("特征贡献：")
+    for feat, val in result.feature_importance.items():
+        print(f"{feat}: {val:.4f}")
+
+    print("\n高亮HTML：\n", result.visualization['highlighted_text'])
+
+    # 如需浏览器查看高亮：
+    with open('lime_highlight.html', 'w', encoding='utf-8') as f:
+        f.write(result.visualization['highlighted_text'])
+    print("\n已保存高亮HTML到 lime_highlight.html，可用浏览器打开。")
+
+if __name__ == '__main__':
+    main()

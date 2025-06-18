@@ -5,7 +5,7 @@
 
 import argparse
 from typing import List, Any
-
+import sys
 
 class CommandParser:
     """命令行参数解析器"""
@@ -46,7 +46,7 @@ class CommandParser:
             action='store_true',
             help='Show this help message and exit'
         )
-
+        global_group.add_argument('-v','--version', action='version', version='xai-cli 1.0.0')
         # 子命令
         subparsers = parser.add_subparsers(
             title='Commands',
@@ -104,7 +104,8 @@ class CommandParser:
         parser.add_argument(
             '-m', '--method',
             required=True,
-            choices=['shap', 'lime', 'grad_cam', 'integrated_gradients', 'dice'],
+            choices=["shap_text", "shap_tabular", "lime_image", "lime_text", "lime_tabular",
+                                       "grad_cam_image", "integrated_gradients_image", "dice_tabular", "attention_text"],
             help='Explanation method'
         )
         parser.add_argument(

@@ -7,7 +7,7 @@ import numpy as np
 import lime
 import lime.lime_tabular
 from typing import Any, Dict, List, Optional, Union
-from src.core.explainer import BaseExplainer, ExplanationResult
+from core.explainer import BaseExplainer, ExplanationResult
 import logging
 import pandas as pd
 import warnings
@@ -212,3 +212,63 @@ class LIMEExplainer(BaseExplainer):
             results.append(self.explain(data, target=target, **kwargs))
 
         return results
+    
+
+import numpy as np
+import pandas as pd
+from sklearn.datasets import load_iris
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.model_selection import train_test_split
+
+
+def main():
+    # 1. 加载和准备数据
+    iris = load_iris()
+    X = pd.DataFrame(iris.data, columns=iris.feature_names)
+    y = iris.target
+
+    # 简化为二分类（只用0/1两类）
+    X = X[y < 2]
+    y = y[y < 2]
+
+    X_train, X_test, y_train, y_test = train_test_split(X, y, random_state=42)
+
+    # 2. 训练模型
+    model = RandomForestClassifier(random_state=42)
+    model.fit(X_train, y_train)
+
+    # 3. 初始化LIME解释器
+    feature_names = list(X.columns)
+    explainer = LIMEExplainer(
+        model=model,
+        task_type='classification',
+        feature_names=feature_names,
+        training_data=X_train.values,  # LIME不需要标签，只要特征
+        categorical_features=None   # 如果有离散特征，传对应列索引
+    )
+
+    # 4. 选一条测试样本生成LIME解释
+    x0 = X_test.iloc[0].values
+    print("原始样本：")
+    print(X_test.iloc[0])
+    print("原始类别:", model.predict([x0])[0])
+    print("原始概率:", model.predict_proba([x0])[0])
+
+    result = explainer.explain(x0, num_features=4)
+
+    # 5. 打印LIME解释结果
+    print("\nLIME特征贡献：")
+    for feat, weight in result.feature_importance.items():
+        print(f"{feat}: {weight:.4f}")
+
+    print("\nLIME可视化as_list：")
+    print(result.visualization['as_list'])
+    print("\n局部预测值（local_pred）:", result.visualization['local_pred'])
+    print("\n可视化HTML内容是否生成：", result.visualization['html'] is not None)
+
+    # 你也可以将 result.visualization['html'] 写到文件本地用浏览器打开
+    with open("lime_tabular_example.html", "w") as f:
+        f.write(result.visualization['html'])
+
+if __name__ == "__main__":
+    main()

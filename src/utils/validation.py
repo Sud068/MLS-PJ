@@ -2,6 +2,7 @@
 输入验证工具
 提供数据验证和清理功能
 """
+import os
 
 import numpy as np
 import re

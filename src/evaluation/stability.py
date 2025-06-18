@@ -69,24 +69,56 @@ class StabilityEvaluator:
 
         return np.mean(stability_scores)
 
+    # @staticmethod
+    # def explanation_consistency(explainer, data: np.ndarray,
+    #                             explanations: List[Dict[str, float]],
+    #                             num_subsets: int = 5,
+    #                             subset_ratio: float = 0.8, **kwargs) -> float:
+    #     """
+    #     计算解释一致性指标
+
+    #     参数:
+    #     explainer: 解释器
+    #     data: 输入数据
+    #     explanations: 解释结果列表
+    #     num_subsets: 子集数量
+    #     subset_ratio: 子集比例
+
+    #     返回:
+    #     平均一致性分数 (0-1之间，越高越好)
+    #     """
+    #     consistency_scores = []
+
+    #     for i, sample in enumerate(data):
+    #         original_exp = explanations[i]
+
+    #         # 生成数据子集
+    #         subsets = StabilityEvaluator._create_subsets(
+    #             data, i, num_subsets, subset_ratio
+    #         )
+
+    #         # 计算每个子集的解释
+    #         subset_exps = []
+    #         for subset in subsets:
+    #             exp = explainer.explain(subset)
+    #             subset_exps.append(exp.feature_importance)
+
+    #         # 计算一致性分数
+    #         exp_similarities = []
+    #         for subset_exp in subset_exps:
+    #             similarity = StabilityEvaluator._explanation_similarity(
+    #                 original_exp, subset_exp
+    #             )
+    #             exp_similarities.append(similarity)
+
+    #         consistency_scores.append(np.mean(exp_similarities))
+
+    #     return np.mean(consistency_scores)
     @staticmethod
     def explanation_consistency(explainer, data: np.ndarray,
                                 explanations: List[Dict[str, float]],
                                 num_subsets: int = 5,
                                 subset_ratio: float = 0.8, **kwargs) -> float:
-        """
-        计算解释一致性指标
-
-        参数:
-        explainer: 解释器
-        data: 输入数据
-        explanations: 解释结果列表
-        num_subsets: 子集数量
-        subset_ratio: 子集比例
-
-        返回:
-        平均一致性分数 (0-1之间，越高越好)
-        """
         consistency_scores = []
 
         for i, sample in enumerate(data):
@@ -97,10 +129,10 @@ class StabilityEvaluator:
                 data, i, num_subsets, subset_ratio
             )
 
-            # 计算每个子集的解释
+            # 用不同子集设定下，对同一个样本解释
             subset_exps = []
             for subset in subsets:
-                exp = explainer.explain(subset)
+                exp = explainer.explain(sample)
                 subset_exps.append(exp.feature_importance)
 
             # 计算一致性分数
@@ -114,6 +146,7 @@ class StabilityEvaluator:
             consistency_scores.append(np.mean(exp_similarities))
 
         return np.mean(consistency_scores)
+
 
     @staticmethod
     def model_confidence_stability(model, explainer, data: np.ndarray,
@@ -240,3 +273,48 @@ class StabilityEvaluator:
 
         # 平均相似度
         return (cos_sim + js_sim) / 2
+    
+
+import numpy as np
+from sklearn.datasets import fetch_california_housing
+from sklearn.ensemble import RandomForestRegressor
+from sklearn.model_selection import train_test_split
+def main():
+    # 1. 加载数据（替换成加州房价数据集）
+    X, y = fetch_california_housing(return_X_y=True)
+    X = X[:50]  # 只用一小部分数据便于测试
+    y = y[:50]
+
+    # 2. 拆分训练/测试
+    X_train, X_test, y_train, y_test = train_test_split(X, y, random_state=0)
+
+    # 3. 训练模型
+    model = RandomForestRegressor(random_state=0)
+    model.fit(X_train, y_train)
+
+    # 4. 定义一个简单的解释器
+    class DummyExplainer:
+        def __init__(self, model):
+            self.model = model
+            self.feature_names = [f"f{i}" for i in range(X.shape[1])]
+        def explain(self, x):
+            coef = np.linspace(1, 2, X.shape[1])
+            vals = x * coef
+            return type('Exp', (), {'feature_importance': {f: v for f, v in zip(self.feature_names, vals)}})()
+
+    # 5. 生成原始解释
+    explainer = DummyExplainer(model)
+    original_explanations = [explainer.explain(x).feature_importance for x in X_test]
+
+
+
+    scores = StabilityEvaluator.evaluate_all(explainer, X_test, original_explanations, model=model)
+
+    # 7. 打印结果
+    print("解释稳定性评估指标：")
+    for k, v in scores.items():
+        print(f"{k}: {v:.4f}")
+
+        
+if __name__ == "__main__":
+    main()

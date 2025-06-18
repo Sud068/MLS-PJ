@@ -6,7 +6,7 @@ LIME图像解释器实现
 import numpy as np
 import cv2
 from typing import Any, Dict, List, Optional, Union
-from src.core.explainer import BaseExplainer, ExplanationResult
+from core.explainer import BaseExplainer, ExplanationResult
 import logging
 import lime
 from lime import lime_image
@@ -60,7 +60,7 @@ class LimeImageExplainer(BaseExplainer):
 
         # 创建LIME解释器
         self.explainer = lime_image.LimeImageExplainer(
-            kernel_size=self.kernel_size,
+            kernel_width=self.kernel_size,
             random_state=self.random_state
         )
 
@@ -131,7 +131,9 @@ class LimeImageExplainer(BaseExplainer):
 
         # 归一化到0-1
         img_array = img_array.astype(np.float32) / 255.0
-
+        mean = np.array([0.485, 0.456, 0.406])
+        std = np.array([0.229, 0.224, 0.225])
+        img_array = (img_array - mean) / std
         return img_array
 
     def _explain_image(self,
@@ -190,7 +192,7 @@ class LimeImageExplainer(BaseExplainer):
 
     def _generate_visualization(self,
                                 img: np.ndarray,
-                                explanation: Any,
+                                explanation: Any,target=None,
                                 **kwargs) -> Dict[str, Any]:
         """生成可视化结果"""
         # 参数
@@ -199,12 +201,15 @@ class LimeImageExplainer(BaseExplainer):
         num_features = kwargs.get('num_features', 10)
         hide_rest = kwargs.get('hide_rest', True)
 
-        # 确定目标类别
-        if explanation.metadata['target_class'] is not None:
-            target = explanation.metadata['target_class']
-        else:
-            # 使用预测概率最高的类别
-            target = np.argmax(explanation.predict_proba)
+        # # 确定目标类别
+        # if explanation.metadata['target_class'] is not None:
+        #     target = explanation.metadata['target_class']
+        # else:
+        #     # 使用预测概率最高的类别
+        #     target = np.argmax(explanation.predict_proba)
+        # 目标类别优先顺序：传入的target > explanation.top_labels[0]
+        if target is None:
+            target = explanation.top_labels[0]
 
         # 获取解释图像
         temp, mask = explanation.get_image_and_mask(
@@ -214,7 +219,11 @@ class LimeImageExplainer(BaseExplainer):
             num_features=num_features,
             hide_rest=hide_rest
         )
-
+        temp = np.array(temp)  # 确保是 numpy 数组
+        if temp.dtype != np.uint8:
+            temp = (255 * temp).clip(0, 255).astype(np.uint8)
+        if temp.ndim == 2:
+            temp = np.stack([temp]*3, axis=-1)
         # 转换为RGB
         img_uint8 = np.uint8(255 * img)
 
@@ -247,3 +256,70 @@ class LimeImageExplainer(BaseExplainer):
             results.append(self.explain(img, target=target, **kwargs))
 
         return results
+    
+
+
+import torch
+import types
+import torchvision.models as models
+import torchvision.transforms as transforms
+from PIL import Image
+import numpy as np
+import matplotlib.pyplot as plt
+
+
+def main():
+    # 1. 加载模型
+    model = models.resnet18(pretrained=True)
+    model.eval()
+
+    # 2. 适配 predict 方法，输入为一组RGB numpy图片，输出为概率
+    def predict(self, images):
+        # images: numpy array, shape (N, H, W, 3), [0,1]
+        transform = transforms.Compose([
+            transforms.ToTensor(),  # (3, H, W), [0,1]
+        ])
+        batch = []
+        for img in images:
+            img_t = transform(img.astype(np.float32)).unsqueeze(0)  # (1,3,H,W)
+            batch.append(img_t)
+        batch = torch.cat(batch, dim=0)
+        with torch.no_grad():
+            logits = model(batch)
+            probs = torch.nn.functional.softmax(logits, dim=1)
+        return probs.cpu().numpy()  # (N, 1000)
+    model.predict = types.MethodType(predict, model)
+
+    # 3. 加载图片
+    img_path = "/data/duyongkun/CPX/classify/MLS-PJ/test_images/cat.png"
+    input_image = Image.open(img_path).convert('RGB')
+    orig_img = np.array(input_image)  # LIME用224x224，RGB
+
+    # 4. 初始化解释器
+    explainer = LimeImageExplainer(
+        model=model,
+        task_type='classification',
+        num_samples=1000,
+        top_labels=5
+    )
+
+    # 5. 生成LIME解释
+    result = explainer.explain(orig_img, target=None, num_features=10, positive_only=True)
+
+    # 6. 可视化
+    explanation_img = result.visualization['explanation_image']
+    plt.imshow(explanation_img)
+    plt.axis('off')
+    plt.title('LIME Explanation')
+    plt.show()
+    explanation_img = np.array(explanation_img)  # 防止是 Image 类型
+    if explanation_img.dtype != np.uint8:
+        explanation_img = (255 * explanation_img).clip(0, 255).astype(np.uint8)
+    if explanation_img.ndim == 2:
+        explanation_img = np.stack([explanation_img]*3, axis=-1)
+    Image.fromarray(explanation_img).save('lime_output.png')
+
+    print("LIME 结果已保存为 lime_output.png")
+
+if __name__ == "__main__":
+    main()

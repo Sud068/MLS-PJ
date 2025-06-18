@@ -10,7 +10,7 @@ from typing import Dict, List, Any, Optional, Union
 import logging
 from io import BytesIO
 import base64
-from .validation import validate_not_none, validate_type
+from utils.validation import validate_not_none, validate_type
 
 logger = logging.getLogger(__name__)
 
@@ -45,7 +45,7 @@ class PlotGenerator:
                            importance: Dict[str, float],
                            title: str = 'Feature Importance',
                            top_n: Optional[int] = None,
-                           figsize: Tuple[int, int] = (10, 6)) -> plt.Figure:
+                           figsize: tuple[int, int] = (10, 6)) -> plt.Figure:
         """
         创建特征重要性条形图
 
@@ -100,7 +100,7 @@ class PlotGenerator:
                                 predictions: np.ndarray,
                                 title: str = 'Prediction Distribution',
                                 bins: int = 30,
-                                figsize: Tuple[int, int] = (10, 6)) -> plt.Figure:
+                                figsize: tuple[int, int] = (10, 6)) -> plt.Figure:
         """
         创建预测分布直方图
 
@@ -128,7 +128,7 @@ class PlotGenerator:
                          cm: np.ndarray,
                          class_names: List[str],
                          title: str = 'Confusion Matrix',
-                         figsize: Tuple[int, int] = (8, 6)) -> plt.Figure:
+                         figsize: tuple[int, int] = (8, 6)) -> plt.Figure:
         """
         创建混淆矩阵热力图
 
@@ -164,7 +164,7 @@ class PlotGenerator:
                   tpr: np.ndarray,
                   roc_auc: float,
                   title: str = 'ROC Curve',
-                  figsize: Tuple[int, int] = (8, 6)) -> plt.Figure:
+                  figsize: tuple[int, int] = (8, 6)) -> plt.Figure:
         """
         创建ROC曲线图
 
@@ -201,7 +201,7 @@ class PlotGenerator:
                                recall: np.ndarray,
                                average_precision: float,
                                title: str = 'Precision-Recall Curve',
-                               figsize: Tuple[int, int] = (8, 6)) -> plt.Figure:
+                               figsize: tuple[int, int] = (8, 6)) -> plt.Figure:
         """
         创建精确率-召回率曲线图
 
@@ -239,7 +239,7 @@ class PlotGenerator:
                      title: str = 'Scatter Plot',
                      x_label: str = 'X',
                      y_label: str = 'Y',
-                     figsize: Tuple[int, int] = (8, 6)) -> plt.Figure:
+                     figsize: tuple[int, int] = (8, 6)) -> plt.Figure:
         """
         创建散点图
 

@@ -1,0 +1,3 @@
+xai-cli explain models/resnet18_full_model.pth test_images/cat.png --method grad_cam_image
+xai-cli explain models/resnet18_full_model.pth test_images/cat.png --method integrated_gradients_image
+xai-cli explain models/resnet18_full_model.pth test_images/cat.png --method lime_image

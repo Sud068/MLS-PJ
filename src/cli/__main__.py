@@ -3,14 +3,54 @@ CLI入口点
 提供命令行接口的主程序
 """
 
+import os
+
+from torchvision.transforms import transforms
+
+os.environ["TF_CPP_MIN_LOG_LEVEL"] = "2"
+os.environ["TF_ENABLE_ONEDNN_OPTS"] = "0"
+
+from core.explainer import display_explanation_result
+
 import sys
+import os
 import logging
-from .command_parser import CommandParser
-from .help_generator import HelpGenerator
-from src.io.config_parser import ConfigParser
-from src.utils.logging import setup_logger
-from src.utils.file_utils import ensure_dir_exists
-from src.core import ModelLoader, BaseExplainer
+import types
+import torch
+import numpy as np
+# 第三方/标准库：放最上面
+# 自定义模块：按功能层次组织顺序整理
+
+# CLI核心模块
+from cli.command_parser import CommandParser
+from cli.help_generator import HelpGenerator
+
+# 配置与日志
+from xai_io.config_parser import ConfigParser
+from utils.logging import setup_logger
+from utils.file_utils import ensure_dir_exists
+
+# 核心模型与解释器
+from core.model_loader import ModelLoader
+from core.explainer import BaseExplainer
+from explainers.factory import get_explainer
+from explainers.image.grad_cam import GradCAMExplainer
+
+# 数据与IO
+from xai_io.data_loader import DataLoader
+from xai_io.result_writer import ResultWriter
+
+# 评估组件
+
+from evaluation.fidelity import FidelityEvaluator
+from evaluation.stability import StabilityEvaluator
+from evaluation.sensitivity import SensitivityEvaluator
+
+# 可视化组件
+from visualization.heatmap_generator import HeatmapGenerator
+from visualization.plot_generator import PlotGenerator
+from visualization.report_generator import ReportGenerator
+
 
 
 def main():
@@ -42,10 +82,6 @@ def main():
             _handle_evaluate_command(args, config, logger)
         elif args.command == 'visualize':
             _handle_visualize_command(args, config, logger)
-        elif args.command == 'compare':
-            _handle_compare_command(args, config, logger)
-        elif args.command == 'serve':
-            _handle_serve_command(args, config, logger)
         else:
             HelpGenerator.print_main_help()
 
@@ -53,16 +89,38 @@ def main():
         print(f"Error: {str(e)}")
         sys.exit(1)
 
-
 def _handle_explain_command(args, config, logger):
     """处理解释命令"""
-    from src.explainers import get_explainer
-    from src.io.data_loader import DataLoader
-    from src.io.result_writer import ResultWriter
-
     # 加载模型
     model = ModelLoader.load(args.model_path, **config.get('model', {}))
     logger.info(f"Loaded model from {args.model_path}")
+
+    if(args.method == 'lime_image'):
+        def predict(self, images):
+            # images: numpy array, shape (N, H, W, 3), [0,1]
+            transform = transforms.Compose([
+                transforms.ToTensor(),  # (3, H, W), [0,1]
+            ])
+            batch = []
+            for img in images:
+                img_t = transform(img.astype(np.float32)).unsqueeze(0)  # (1,3,H,W)
+                batch.append(img_t)
+            batch = torch.cat(batch, dim=0)
+            with torch.no_grad():
+                logits = model(batch)
+                probs = torch.nn.functional.softmax(logits, dim=1)
+            return probs.cpu().numpy()  # (N, 1000)
+
+        model.predict = types.MethodType(predict, model)
+    else:
+        def predict(self, x):
+            with torch.no_grad():
+                return self(x)
+
+        model.predict = types.MethodType(predict, model)
+    model.predict = types.MethodType(predict, model)
+
+    logger.info("为PyTorch模型自动添加了predict方法。")
 
     # 加载数据
     data = DataLoader.load(args.data_path, **config.get('data', {}))
@@ -83,19 +141,23 @@ def _handle_explain_command(args, config, logger):
         results = explainer.batch_explain(data, targets=args.target)
     else:
         results = explainer.explain(data, target=args.target)
+    if isinstance(results, list):
+        for i, res in enumerate(results):
+            print(f"\n=== 第{i + 1}个解释结果 ===")
+            display_explanation_result(res)
+    else:
+        display_explanation_result(results)
 
     # 保存结果
-    output_path = args.output or f"explanation_{args.method}.json"
+    output_path = args.output or f"./explanation_{args.method}.json"
+    os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
     ResultWriter.write(results, output_path)
+    output_path = "output/output_json"
     logger.info(f"Saved explanation to {output_path}")
 
 
 def _handle_evaluate_command(args, config, logger):
     """处理评估命令"""
-    from src.evaluation import FidelityEvaluator, StabilityEvaluator, SensitivityEvaluator
-    from src.io.data_loader import DataLoader
-    from src.io.result_writer import ResultWriter
-
     # 加载解释结果
     explanation = DataLoader.load(args.explanation_path)
     logger.info(f"Loaded explanation from {args.explanation_path}")
@@ -109,7 +171,6 @@ def _handle_evaluate_command(args, config, logger):
     logger.info(f"Loaded model from {args.model_path}")
 
     # 加载解释器
-    from src.explainers import get_explainer
     explainer = get_explainer(
         model=model,
         method=explanation.get('method', 'shap'),
@@ -145,10 +206,6 @@ def _handle_evaluate_command(args, config, logger):
 
 def _handle_visualize_command(args, config, logger):
     """处理可视化命令"""
-    from src.visualization import PlotGenerator, HeatmapGenerator, ReportGenerator
-    from src.io.data_loader import DataLoader
-    from src.io.result_writer import ResultWriter
-
     # 加载解释结果
     explanation = DataLoader.load(args.explanation_path)
     logger.info(f"Loaded explanation from {args.explanation_path}")
@@ -193,46 +250,6 @@ def _handle_visualize_command(args, config, logger):
     logger.info(f"Saved visualization to {output_path}")
 
 
-def _handle_compare_command(args, config, logger):
-    """处理比较命令"""
-    from src.io.data_loader import DataLoader
-    from src.io.result_writer import ResultWriter
-    from src.core.explainer import ExplanationComparator
-
-    # 加载解释结果
-    explanations = []
-    for path in args.inputs:
-        exp = DataLoader.load(path)
-        explanations.append(exp)
-        logger.info(f"Loaded explanation from {path}")
-
-    # 创建比较器
-    comparator = ExplanationComparator()
-    for i, exp in enumerate(explanations):
-        comparator.add_method(f"method_{i + 1}", exp)
-
-    # 执行比较
-    comparison = comparator.compare(
-        metrics=args.metrics,
-        visualization=args.visualize
-    )
-
-    # 保存结果
-    output_path = args.output or "comparison_report.pdf"
-    ResultWriter.write(comparison, output_path)
-    logger.info(f"Saved comparison report to {output_path}")
-
-
-def _handle_serve_command(args, config, logger):
-    """处理服务命令"""
-    from src.api.server import start_server
-
-    logger.info(f"Starting XAI API server on port {args.port}")
-    start_server(
-        host=args.host,
-        port=args.port,
-        config=config
-    )
 
 
 if __name__ == "__main__":

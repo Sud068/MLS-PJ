@@ -9,7 +9,7 @@ from dice_ml.utils import helpers
 import pandas as pd
 import numpy as np
 from typing import Any, Dict, List, Optional, Union
-from src.core.explainer import BaseExplainer, ExplanationResult
+from core.explainer import BaseExplainer, ExplanationResult
 import logging
 import warnings
 
@@ -169,11 +169,11 @@ class DiCEExplainer(BaseExplainer):
         )
 
         # 设置反事实结果
-        result.counterfactuals = self._get_counterfactuals(dice_exp)
-
+        # result.counterfactuals = self._get_counterfactuals(dice_exp)
+        result.counterfactuals = self._get_counterfactuals(dice_exp, original_input=input_df.iloc[0].to_dict())
         return result
 
-    def _get_counterfactuals(self, dice_exp) -> List[Dict[str, Any]]:
+    def _get_counterfactuals(self, dice_exp, original_input=None) -> List[Dict[str, Any]]:
         """从DiCE结果中提取反事实信息"""
         counterfactuals = []
 
@@ -181,27 +181,31 @@ class DiCEExplainer(BaseExplainer):
         cf_df = dice_exp.cf_examples_list[0].final_cfs_df
 
         # 获取原始输入和预测
-        original_input = dice_exp.test_instance_df.iloc[0].to_dict()
-        original_pred = self.model.predict(
-            dice_exp.test_instance_df.values.reshape(1, -1))[0]
+        # 获取原始输入
+        if original_input is None:
+            if hasattr(dice_exp, 'test_instance_df'):
+                original_input = dice_exp.test_instance_df.iloc[0].to_dict()
+            elif hasattr(dice_exp, 'test_data'):
+                if isinstance(dice_exp.test_data, list):
+                    original_input = dice_exp.test_data[0]
+                elif isinstance(dice_exp.test_data, pd.DataFrame):
+                    original_input = dice_exp.test_data.iloc[0].to_dict()
+                else:
+                    raise AttributeError("Unknown structure for dice_exp.test_data")
+            else:
+                raise AttributeError("No valid test instance found in dice_exp.")
 
-        # 对于分类任务，获取概率
-        if self.task_type == 'classification':
-            original_prob = self.model.predict_proba(
-                dice_exp.test_instance_df.values.reshape(1, -1))[0]
 
         # 处理每个反事实
         for idx, row in cf_df.iterrows():
             cf_dict = row.to_dict()
 
             # 获取反事实的预测
-            cf_pred = self.model.predict(
-                row.values.reshape(1, -1))[0]
+            # 只取特征列
+            cf_feature_values = np.array([cf_dict[f] for f in self.feature_names]).reshape(1, -1)
+            cf_pred = self.model.predict(cf_feature_values)[0]
+            cf_prob = self.model.predict_proba(cf_feature_values)[0] if self.task_type == 'classification' else None
 
-            # 对于分类任务，获取概率
-            if self.task_type == 'classification':
-                cf_prob = self.model.predict_proba(
-                    row.values.reshape(1, -1))[0]
 
             # 计算变化
             changes = {}
@@ -269,3 +273,58 @@ class DiCEExplainer(BaseExplainer):
     def set_feature_ranges(self, feature_ranges: Dict[str, float]):
         """设置特征范围用于距离计算"""
         self.feature_ranges_ = feature_ranges
+
+import numpy as np
+import pandas as pd
+from sklearn.datasets import load_iris
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.model_selection import train_test_split
+
+def main():
+    iris = load_iris()
+    X = pd.DataFrame(iris.data, columns=iris.feature_names)
+    y = iris.target
+
+    X = X[y < 2]
+    y = y[y < 2]
+
+    X_train, X_test, y_train, y_test = train_test_split(X, y, random_state=42)
+
+    # 【修复点】训练集加上标签列
+    X_train_with_target = X_train.copy()
+    X_train_with_target['target'] = y_train
+
+    # 训练模型
+    model = RandomForestClassifier(random_state=42)
+    model.fit(X_train, y_train)
+    feature_names = list(X.columns)
+
+    explainer = DiCEExplainer(
+        model=model,
+        task_type='classification',
+        feature_names=feature_names,
+        training_data=X_train_with_target,   # 修复点
+        continuous_features=feature_names,
+        method='random',
+        total_CFs=3
+    )
+
+    x0 = X_test.iloc[0].values
+    print("原始样本：")
+    print(X_test.iloc[0])
+    print("原始类别:", model.predict([x0])[0])
+    print("原始概率:", model.predict_proba([x0])[0])
+
+    result = explainer.explain(x0, target=1)
+    
+    print("\n反事实解释：")
+    for i, cf in enumerate(result.counterfactuals):
+        print(f"\n反事实#{i+1}:")
+        print("  features:", cf['features'])
+        print("  prediction:", cf['prediction'])
+        print("  probability:", cf['probability'])
+        print("  changes:", cf['changes'])
+        print("  distance:", cf['distance'])
+
+if __name__ == "__main__":
+    main()

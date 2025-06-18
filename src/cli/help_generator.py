@@ -51,8 +51,8 @@ class HelpGenerator:
               xai-cli explain [options] <model_path> <data_path>
 
             Options:
-              -m, --method <method>    Explanation method (shap, lime, grad_cam, 
-                                       integrated_gradients, dice)
+              -m, --method <method>    Explanation method (shap_text, shap_tabular, lime_image, lime_text, lime_tabular,
+                                       grad_cam_image, integrated_gradients_image, dice_tabular, attention_text)
               -t, --task-type <type>   Task type (classification, regression) 
                                        [default: classification]
               --target <class>         Target class for explanation (classification)

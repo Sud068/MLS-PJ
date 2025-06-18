@@ -174,3 +174,50 @@ class FidelityEvaluator:
         results['composite_fidelity'] = np.mean(list(results.values()))
 
         return results
+    
+import numpy as np
+from sklearn.datasets import fetch_california_housing
+from sklearn.ensemble import RandomForestRegressor
+from sklearn.linear_model import LinearRegression
+from sklearn.model_selection import train_test_split
+
+def main():
+    # 1. 加载数据
+    X, y = fetch_california_housing(return_X_y=True)
+    X = X[:50]  # 选前50条做测试
+    y = y[:50]
+
+    # 2. 拆分训练/测试
+    X_train, X_test, y_train, y_test = train_test_split(X, y, random_state=0)
+
+    # 3. 训练模型
+    model = RandomForestRegressor(random_state=0)
+    model.fit(X_train, y_train)
+
+    # 4. 定义解释器
+    class DummyExplainer:
+        def __init__(self, model):
+            self.model = model
+            self.feature_names = [f'feature_{i}' for i in range(X.shape[1])]
+        def explain(self, x):
+            coef = np.linspace(1, 2, X.shape[1])
+            vals = x * coef
+            return type('Exp', (), {'feature_importance': {f: v for f, v in zip(self.feature_names, vals)}})()
+
+    # 5. 生成原始解释
+    explainer = DummyExplainer(model)
+    original_explanations = [explainer.explain(x).feature_importance for x in X_test]
+
+    # 6. 定义代理模型（用于 prediction_similarity）
+    surrogate_model = LinearRegression()
+
+    # 7. 保真度评估
+    scores = FidelityEvaluator.evaluate_all(model, explainer, X_test, original_explanations, surrogate_model=surrogate_model)
+
+    # 8. 打印结果
+    print("解释保真度评估指标：")
+    for k, v in scores.items():
+        print(f"{k}: {v:.4f}")
+
+if __name__ == "__main__":
+    main()

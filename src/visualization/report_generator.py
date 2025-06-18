@@ -3,14 +3,17 @@ PDF报告生成器
 创建包含可视化结果的PDF报告
 """
 
+import numpy as np
+from PIL.Image import Image
 from fpdf import FPDF
 import matplotlib.pyplot as plt
 from datetime import datetime
 from typing import List, Dict, Any, Optional, Tuple
+from typing import Union
 import logging
 import base64
 from io import BytesIO
-from .validation import validate_not_none, validate_type
+from utils.validation import validate_not_none, validate_type
 
 logger = logging.getLogger(__name__)
 

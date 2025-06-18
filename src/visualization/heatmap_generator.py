@@ -2,6 +2,8 @@
 热力图生成器
 创建各种热力图可视化解释结果
 """
+import base64
+from io import BytesIO
 
 import numpy as np
 import matplotlib.pyplot as plt
@@ -10,7 +12,7 @@ from typing import List, Dict, Any, Optional, Tuple
 import cv2
 from PIL import Image
 import logging
-from .validation import validate_not_none, validate_type
+from utils.validation import validate_not_none, validate_type
 
 logger = logging.getLogger(__name__)
 

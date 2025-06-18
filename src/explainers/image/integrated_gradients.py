@@ -6,7 +6,7 @@ Integrated Gradients解释器实现
 import numpy as np
 import cv2
 from typing import Any, Dict, List, Optional, Union
-from src.core.explainer import BaseExplainer, ExplanationResult
+from core.explainer import BaseExplainer, ExplanationResult
 import logging
 import torch
 import tensorflow as tf
@@ -129,7 +129,9 @@ class IntegratedGradientsExplainer(BaseExplainer):
 
         # 归一化到0-1
         img_array = img_array.astype(np.float32) / 255.0
-
+        mean = np.array([0.485, 0.456, 0.406])
+        std = np.array([0.229, 0.224, 0.225])
+        img_array = (img_array - mean) / std
         return img_array
 
     def _compute_integrated_gradients(self,
@@ -160,8 +162,8 @@ class IntegratedGradientsExplainer(BaseExplainer):
         else:
             baseline = self._preprocess_image(self.baseline)
             baseline = torch.from_numpy(baseline).permute(2, 0, 1).unsqueeze(0).float()
-            if self.use_cuda:
-                baseline = baseline.cuda()
+        if self.use_cuda:
+            baseline = baseline.cuda()
 
         # 计算梯度
         integrated_grads = torch.zeros_like(img_tensor)
@@ -173,23 +175,15 @@ class IntegratedGradientsExplainer(BaseExplainer):
 
         # 遍历alpha值
         for alpha in alphas:
-            # 插值输入
             input_step = baseline + alpha * (img_tensor - baseline)
-            input_step.requires_grad = True
-
-            # 前向传播
-            output = self.model(input_step)
-
-            # 确定目标
-            if target is None:
-                target = torch.argmax(output)
-
-            # 计算目标类别的梯度
+            input_step.requires_grad_()
             self.model.zero_grad()
-            output[0, target].backward(retain_graph=True)
-
-            # 累加梯度
-            integrated_grads += input_step.grad
+            output = self.model(input_step)
+            target_idx = torch.argmax(output) if target is None else target
+            loss = output[0, target_idx]
+            # 关键：用 autograd.grad 获取梯度
+            grads = torch.autograd.grad(loss, input_step)[0]
+            integrated_grads += grads
 
         # 平均梯度
         integrated_grads /= self.steps
@@ -210,6 +204,7 @@ class IntegratedGradientsExplainer(BaseExplainer):
         ig = (ig - np.min(ig)) / (np.max(ig) - np.min(ig) + 1e-8)
 
         return ig
+
 
     def _compute_tensorflow(self,
                             img: np.ndarray,
@@ -324,3 +319,60 @@ class IntegratedGradientsExplainer(BaseExplainer):
             results.append(self.explain(img, target=target, **kwargs))
 
         return results
+    
+
+
+import torch
+import types
+import torchvision.models as models
+import torchvision.transforms as transforms
+from PIL import Image
+import matplotlib.pyplot as plt
+import numpy as np
+
+
+def main():
+    # 1. 加载预训练模型
+    # model = models.resnet18(pretrained=True)
+    model = torch.load("resnet18_full_model.pth", map_location="cpu",weights_only = False)
+    model.eval()
+    # 加 predict 方法
+    def predict(self, x):
+        with torch.no_grad():
+            return self(x)
+    model.predict = types.MethodType(predict, model)
+
+    # 2. 选择解释目标类别
+    target_class = 283  # Persian_cat
+
+    # 3. 初始化解释器
+    explainer = IntegratedGradientsExplainer(
+        model=model,
+        task_type='classification',
+        steps=50,
+        use_cuda=False,
+        model_type='pytorch'
+    )
+
+    # 4. 读取和处理图片
+    img_path = '/data/duyongkun/CPX/classify/MLS-PJ/test_images/cat.png'  # 替换为你的图片路径
+    input_image = Image.open(img_path).convert('RGB')
+    img_np = np.array(input_image)  # HWC, uint8, [0,255]
+
+    # 6. 生成Integrated Gradients解释
+    result = explainer.explain(img_np, target=target_class)
+
+    # 7. 显示可视化结果
+    superimposed = result.visualization['superimposed']
+    plt.imshow(superimposed)
+    plt.title('Integrated Gradients Result')
+    plt.axis('off')
+    plt.show()
+
+    # 8. 保存图片
+    Image.fromarray(superimposed).save('ig_output.jpg')
+    print("Integrated Gradients 结果已保存为 ig_output.jpg")
+    print(superimposed)
+
+if __name__ == "__main__":
+    main()

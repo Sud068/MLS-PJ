@@ -6,9 +6,10 @@ SHAP解释器实现
 import numpy as np
 import shap
 from typing import Any, Dict, List, Optional, Union
-from src.core.explainer import BaseExplainer, ExplanationResult
+from core.explainer import BaseExplainer, ExplanationResult
 import logging
 import warnings
+import pandas as pd
 
 # 忽略SHAP的警告
 warnings.filterwarnings("ignore", category=UserWarning, module="shap")
@@ -136,14 +137,20 @@ class SHAPExplainer(BaseExplainer):
         # 获取SHAP值
         nsamples = kwargs.get('nsamples', self.nsamples)
         check_additivity = kwargs.get('check_additivity', True)
-
+        is_kernel = 'kernel' in str(type(self.explainer)).lower()
         # 对于分类模型，计算指定类别的SHAP值
         if self.task_type == 'classification' and target is not None:
-            shap_values = self.explainer.shap_values(
-                input_data,
-                nsamples=nsamples,
-                check_additivity=check_additivity
-            )
+            if is_kernel:
+                shap_values = self.explainer.shap_values(
+                    input_data,
+                    nsamples=nsamples,
+                    check_additivity=check_additivity
+                )
+            else:
+                shap_values = self.explainer.shap_values(
+                    input_data,
+                    check_additivity=check_additivity
+                )
 
             # 多分类模型返回列表
             if isinstance(shap_values, list):
@@ -155,11 +162,17 @@ class SHAPExplainer(BaseExplainer):
             else:
                 shap_vals = shap_values
         else:
-            shap_vals = self.explainer.shap_values(
-                input_data,
-                nsamples=nsamples,
-                check_additivity=check_additivity
-            )
+            if is_kernel:
+                shap_vals = self.explainer.shap_values(
+                    input_data,
+                    nsamples=nsamples,
+                    check_additivity=check_additivity
+                )
+            else:
+                shap_vals = self.explainer.shap_values(
+                    input_data,
+                    check_additivity=check_additivity
+                )
 
         # 确保是二维数组
         if shap_vals.ndim == 1:
@@ -174,13 +187,26 @@ class SHAPExplainer(BaseExplainer):
                 'explainer_type': str(type(self.explainer))
             }
         )
+        # print(shap_vals.shape)
+        if shap_vals.ndim == 3 and shap_vals.shape[0] == 1:
+            # (1, n_features, n_outputs) => (n_features, n_outputs)
+            shap_vals = shap_vals[0]
 
-        # 设置特征重要性
-        feature_importance = self._get_feature_importance(shap_vals[0])
+        # 处理特征重要性
+        if shap_vals.ndim == 2 and shap_vals.shape[0] == len(self.feature_names):
+            # shap_vals: (n_features, n_outputs)          
+            if target is not None and shap_vals.shape[1] > 1:
+                feature_importance = self._get_feature_importance(shap_vals[:, target])
+            else:
+                feature_importance = self._get_feature_importance(shap_vals.mean(axis=1))
+        elif shap_vals.ndim == 2 and shap_vals.shape[0] == 1:
+            feature_importance = self._get_feature_importance(shap_vals[0])
+        else:
+            feature_importance = self._get_feature_importance(shap_vals.squeeze())
         result.feature_importance = feature_importance
 
         # 添加可视化数据
-        result.visualization = self._generate_visualization(input_data, shap_vals)
+        result.visualization = self._generate_visualization(input_data, shap_vals, target)
 
         return result
 
@@ -188,31 +214,58 @@ class SHAPExplainer(BaseExplainer):
         """从SHAP值创建特征重要性字典"""
         if self.feature_names is None:
             self.feature_names = [f'feature_{i}' for i in range(len(shap_values))]
+        return {name: float(np.squeeze(val)) for name, val in zip(self.feature_names, shap_values)}
 
-        return {name: float(val) for name, val in zip(self.feature_names, shap_values)}
+    # def _generate_visualization(self, input_data: np.ndarray, shap_values: np.ndarray):
+    #     """生成SHAP可视化数据"""
+    #     # 创建SHAP对象
+    #     if self.method == 'kernel':
+    #         shap_obj = shap.Explanation(
+    #             values=shap_values,
+    #             base_values=self.explainer.expected_value,
+    #             data=input_data,
+    #             feature_names=self.feature_names
+    #         )
+    #     else:
+    #         shap_obj = shap.Explanation(
+    #             values=shap_values,
+    #             base_values=self.explainer.expected_value,
+    #             data=input_data,
+    #             feature_names=self.feature_names
+    #         )
 
-    def _generate_visualization(self, input_data: np.ndarray, shap_values: np.ndarray):
+    #     return {
+    #         'force_plot': shap.force_plot(
+    #             self.explainer.expected_value,
+    #             shap_values,
+    #             input_data,
+    #             feature_names=self.feature_names,
+    #             matplotlib=False
+    #         ),
+    #         'summary_plot': shap_obj,
+    #         'type': 'shap'
+    #     }
+    def _generate_visualization(self, input_data: np.ndarray, shap_values: np.ndarray, target: Optional[int] = None):
         """生成SHAP可视化数据"""
-        # 创建SHAP对象
-        if self.method == 'kernel':
-            shap_obj = shap.Explanation(
-                values=shap_values,
-                base_values=self.explainer.expected_value,
-                data=input_data,
-                feature_names=self.feature_names
-            )
+        # 取目标类别shap值和base_value
+        if shap_values.ndim == 2 and shap_values.shape[1] > 1 and target is not None:
+            shap_for_target = shap_values[:, target]
+            base_value = self.explainer.expected_value[target] if isinstance(self.explainer.expected_value, (list, np.ndarray)) else self.explainer.expected_value
         else:
-            shap_obj = shap.Explanation(
-                values=shap_values,
-                base_values=self.explainer.expected_value,
-                data=input_data,
-                feature_names=self.feature_names
-            )
+            shap_for_target = shap_values.squeeze()
+            base_value = self.explainer.expected_value if not isinstance(self.explainer.expected_value, (list, np.ndarray)) else self.explainer.expected_value[0]
+
+        shap_obj = shap.Explanation(
+            values=shap_for_target,
+            base_values=base_value,
+            data=input_data,
+            feature_names=self.feature_names
+        )
 
         return {
             'force_plot': shap.force_plot(
-                self.explainer.expected_value,
-                shap_values,
+                base_value,
+                shap_for_target,
                 input_data,
                 feature_names=self.feature_names,
                 matplotlib=False
@@ -220,7 +273,6 @@ class SHAPExplainer(BaseExplainer):
             'summary_plot': shap_obj,
             'type': 'shap'
         }
-
     def batch_explain(self,
                       input_batch: Union[np.ndarray, pd.DataFrame],
                       targets: Optional[List[Any]] = None,
@@ -302,3 +354,63 @@ class SHAPExplainer(BaseExplainer):
         )
 
         return result
+    
+import numpy as np
+import pandas as pd
+from sklearn.datasets import load_iris
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.model_selection import train_test_split
+
+def main():
+    # 1. 加载和准备数据
+    iris = load_iris()
+    X = pd.DataFrame(iris.data, columns=iris.feature_names)
+    y = iris.target
+
+    # 只用0/1两类
+    X = X[y < 2]
+    y = y[y < 2]
+
+    X_train, X_test, y_train, y_test = train_test_split(X, y, random_state=42)
+
+    # 2. 训练模型
+    model = RandomForestClassifier(random_state=42)
+    model.fit(X_train, y_train)
+
+    # 3. 初始化SHAP解释器
+    feature_names = list(X.columns)
+    # background_data可以用训练集的前100条
+    background_data = X_train.values[:100]
+
+    explainer = SHAPExplainer(
+        model=model,
+        task_type='classification',
+        feature_names=feature_names,
+        background_data=background_data,
+        method='auto',
+        nsamples=100
+    )
+
+    # 4. 选一条测试样本生成SHAP解释
+    x0 = X_test.iloc[0].values
+    print("原始样本：")
+    print(X_test.iloc[0])
+    print("原始类别:", model.predict([x0])[0])
+    print("原始概率:", model.predict_proba([x0])[0])
+
+    result = explainer.explain(x0, target=1)
+
+    # 5. 打印SHAP解释结果
+    print("\nSHAP特征贡献：")
+    for feat, val in result.feature_importance.items():
+        print(f"{feat}: {val:.4f}")
+
+    print("\n可视化（force_plot对象）：", type(result.visualization['force_plot']))
+    print("SHAP summary_plot对象:", type(result.visualization['summary_plot']))
+
+    # 如果你想保存force_plot为html
+    import shap
+    shap.save_html("shap_force_plot.html", result.visualization['force_plot'])
+
+if __name__ == "__main__":
+    main()
